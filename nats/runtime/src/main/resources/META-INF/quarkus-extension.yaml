@@ -1,0 +1,13 @@
+name: "Distributed Lock - NATS"
+artifact: ${project.groupId}:${project.artifactId}:${project.version}
+metadata:
+  keywords:
+    - "lock"
+    - "distributed-lock"
+    - "nats"
+    - "jetstream"
+  categories:
+    - "miscellaneous"
+  status: "experimental"
+  config:
+    - "quarkus.lock."

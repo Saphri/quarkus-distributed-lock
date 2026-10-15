@@ -24,6 +24,8 @@
         <nats-jetstream.version>3.40.7</nats-jetstream.version>
         <compiler-plugin.version>3.14.0</compiler-plugin.version>
         <surefire-plugin.version>3.5.3</surefire-plugin.version>
+        <assertj.version>3.27.7</assertj.version>
+        <testcontainers.version>2.0.5</testcontainers.version>
     </properties>
 
     <dependencyManagement>
@@ -54,6 +56,11 @@
                 <groupId>io.quarkiverse.lock</groupId>
                 <artifactId>quarkus-distributed-lock-nats-deployment</artifactId>
                 <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.assertj</groupId>
+                <artifactId>assertj-core</artifactId>
+                <version>${assertj.version}</version>
             </dependency>
             <dependency>
                 <groupId>io.quarkiverse.reactivemessaging.nats-jetstream</groupId>
