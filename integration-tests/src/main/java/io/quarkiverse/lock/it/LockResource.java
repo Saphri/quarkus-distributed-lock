@@ -12,6 +12,7 @@ import jakarta.ws.rs.QueryParam;
 
 import io.quarkiverse.lock.LockKey;
 import io.quarkiverse.lock.LockRegistry;
+import io.quarkiverse.lock.LockRegistryName;
 import io.quarkiverse.lock.Locked;
 import io.quarkiverse.lock.OnTimeout;
 import io.smallrye.common.annotation.Blocking;
@@ -23,6 +24,10 @@ public class LockResource {
 
     @Inject
     LockRegistry locks;
+
+    @Inject
+    @LockRegistryName("jobs")
+    LockRegistry jobsRegistry;
 
     @Inject
     Jobs jobs;
@@ -47,8 +52,9 @@ public class LockResource {
     @GET
     @Path("/{key}/try")
     @Blocking
-    public String tryLock(@PathParam("key") String key) {
-        return locks.tryExecuteLocked(key, Duration.ZERO, () -> "free").orElse("busy");
+    public String tryLock(@PathParam("key") String key, @QueryParam("registry") String registry) {
+        LockRegistry r = "jobs".equals(registry) ? jobsRegistry : locks;
+        return r.tryExecuteLocked(key, Duration.ZERO, () -> "free").orElse("busy");
     }
 
     @GET

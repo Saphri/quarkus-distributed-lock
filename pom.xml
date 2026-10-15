@@ -8,6 +8,15 @@
     <version>999-SNAPSHOT</version>
     <packaging>pom</packaging>
     <name>Quarkus Distributed Lock - Parent</name>
+    <description>Distributed locks for Quarkus with pluggable backends (in-JVM, NATS JetStream KV)</description>
+
+    <licenses>
+        <license>
+            <name>The Apache Software License, Version 2.0</name>
+            <url>https://www.apache.org/licenses/LICENSE-2.0.txt</url>
+            <distribution>repo</distribution>
+        </license>
+    </licenses>
 
     <modules>
         <module>core/runtime</module>
