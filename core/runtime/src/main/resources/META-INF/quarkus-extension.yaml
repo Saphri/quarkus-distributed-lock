@@ -1,0 +1,13 @@
+name: "Distributed Lock"
+artifact: ${project.groupId}:${project.artifactId}:${project.version}
+metadata:
+  keywords:
+    - "lock"
+    - "distributed-lock"
+    - "mutex"
+    - "leader"
+  categories:
+    - "miscellaneous"
+  status: "experimental"
+  config:
+    - "quarkus.lock."
