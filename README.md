@@ -84,7 +84,7 @@ At startup the extension creates the bucket if it is missing. Startup fails if a
 ## Building
 
 ```shell
-mvn install                          # unit and dev-services tests (needs Docker)
-mvn verify -pl integration-tests -Dnative   # native integration test (needs GraalVM)
-mvn -f spike/pom.xml test            # the NATS spike
+./mvnw install                          # unit and dev-services tests (needs Docker)
+./mvnw verify -pl integration-tests -Dnative   # native integration test (needs GraalVM)
+./mvnw -f spike/pom.xml test            # the NATS spike
 ```
