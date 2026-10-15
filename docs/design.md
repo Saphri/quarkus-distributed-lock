@@ -271,3 +271,15 @@ ShedLock already ships a JetStream provider (see §1), so a NATS ShedLock provid
 - Go prior art: https://pkg.go.dev/github.com/incroy/entcache@v0.5.0/natscache, https://beta.pkg.go.dev/github.com/metal-toolbox/addonx/natslock
 - Python prior art: https://pypi.org/project/3tears-nats/
 - Spring Integration LockRegistry: https://docs.spring.io/spring-integration/reference/distributed-locks.html
+
+## 10. Implementation notes (v1)
+
+Where the v1 code differs from the sketches above, and why:
+
+- **NATS config is registry-first**: `quarkus.lock.nats.lease` / `quarkus.lock."jobs".nats.lease` instead of `quarkus.lock.nats.jobs.lease`. It follows the `quarkus.datasource."name".jdbc.*` convention, so `nats` can never be mistaken for a registry name, and every backend nests its settings the same way.
+- **`LockBackend.tryAcquire(key, ownerId)` has no lease argument**: the lease is backend configuration (for NATS it is the bucket's max age, see §5.2), and the backend reports it through `Lease.expiresAt()`. `LockBackend` also gained `validateKey(key)` (fail fast at `obtain()`) and `close()`; `Capability` adds `NON_BLOCKING` so the in-memory backend skips the worker-thread hop.
+- **Lost leases are a CDI event** (`@Observes LockLostEvent`) rather than a listener interface.
+- **Async acquisitions are not reentrant** (no thread identity to key on); a `Uni` task that locks the same key again waits for itself until the timeout. Documented on `executeLockedAsync`.
+- **Registries are created lazily**, except those referenced at build time (`@LockRegistryName`, `@Locked(registry)`, `quarkus.lock."name".type`) or carrying backend config (`quarkus.lock."name".nats.*`), which are created at startup so bucket/lease mismatches fail fast.
+- **App-defined backends**: if the application itself declares a `LockBackendFactory`, an unknown `type` is no longer a build error (the factory's type is only known at runtime); the runtime check still applies.
+- Not in v1 yet: Micrometer metrics and the health check of §7.
