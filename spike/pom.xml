@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <!-- Standalone spike (design §9 step 1): plain jnats + Testcontainers, not part of the extension build. -->
+    <groupId>io.quarkiverse.lock</groupId>
+    <artifactId>quarkus-distributed-lock-nats-spike</artifactId>
+    <version>999-SNAPSHOT</version>
+    <name>Quarkus Distributed Lock - NATS KV spike</name>
+
+    <properties>
+        <maven.compiler.release>17</maven.compiler.release>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <jnats.version>2.26.4</jnats.version>
+        <testcontainers.version>2.0.5</testcontainers.version>
+    </properties>
+
+    <dependencies>
+        <dependency>
+            <groupId>io.nats</groupId>
+            <artifactId>jnats</artifactId>
+            <version>${jnats.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>testcontainers</artifactId>
+            <version>${testcontainers.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <version>5.13.4</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-simple</artifactId>
+            <version>2.0.17</version>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <version>3.5.3</version>
+                <configuration>
+                    <redirectTestOutputToFile>false</redirectTestOutputToFile>
+                    <trimStackTrace>false</trimStackTrace>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+</project>
