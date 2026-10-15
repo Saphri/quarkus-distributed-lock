@@ -18,12 +18,14 @@ import org.jboss.jandex.IndexView;
 import org.jboss.jandex.MethodInfo;
 import org.jboss.jandex.MethodParameterInfo;
 import org.jboss.jandex.Type;
+import org.jboss.logging.Logger;
 
 import io.quarkiverse.lock.LockKey;
 import io.quarkiverse.lock.LockRegistryName;
 import io.quarkiverse.lock.Locked;
 import io.quarkiverse.lock.OnTimeout;
 import io.quarkiverse.lock.runtime.InMemoryLockBackendFactory;
+import io.quarkiverse.lock.spi.LockBackendFactory;
 import io.quarkiverse.lock.runtime.LockBuildTimeConfig;
 import io.quarkiverse.lock.runtime.LockRegistries;
 import io.quarkiverse.lock.runtime.LockRegistryProducer;
@@ -41,10 +43,13 @@ import io.quarkus.runtime.configuration.DurationConverter;
 
 class LockProcessor {
 
+    private static final Logger LOG = Logger.getLogger(LockProcessor.class);
+
     static final String FEATURE = "distributed-lock";
 
     static final DotName LOCKED = DotName.createSimple(Locked.class);
     static final DotName LOCK_KEY = DotName.createSimple(LockKey.class);
+    static final DotName LOCK_BACKEND_FACTORY = DotName.createSimple(LockBackendFactory.class);
     static final DotName UNI = DotName.createSimple("io.smallrye.mutiny.Uni");
     static final DotName MULTI = DotName.createSimple("io.smallrye.mutiny.Multi");
     static final DotName PUBLISHER = DotName.createSimple("org.reactivestreams.Publisher");
@@ -80,17 +85,27 @@ class LockProcessor {
 
     @BuildStep
     void validateBackendTypes(LockBuildTimeConfig config, List<LockBackendTypeBuildItem> available,
-            BuildProducer<ValidationErrorBuildItem> validationErrors) {
+            CombinedIndexBuildItem combinedIndex, BuildProducer<ValidationErrorBuildItem> validationErrors) {
         Set<String> types = available.stream().map(LockBackendTypeBuildItem::getType)
                 .collect(Collectors.toCollection(TreeSet::new));
+        // backends implemented in the application itself announce their type only at runtime
+        Set<String> appFactories = combinedIndex.getIndex().getAllKnownImplementations(LOCK_BACKEND_FACTORY).stream()
+                .map(c -> c.name().toString()).collect(Collectors.toCollection(TreeSet::new));
         Set<String> names = new HashSet<>(config.registries().keySet());
         names.add(LockRegistryName.DEFAULT);
         List<String> errors = new ArrayList<>();
         for (String name : names) {
             String type = config.type(name);
-            if (!types.contains(type)) {
-                errors.add("Lock registry '" + name + "' uses unknown type '" + type + "'; available types: " + types
-                        + ". Add the extension providing it (for example quarkus-distributed-lock-nats).");
+            if (types.contains(type)) {
+                continue;
+            }
+            String msg = "Lock registry '" + name + "' uses unknown type '" + type + "'; available types: " + types
+                    + ". Add the extension providing it (for example quarkus-distributed-lock-nats).";
+            if (appFactories.isEmpty()) {
+                errors.add(msg);
+            } else {
+                LOG.debugf("%s Not failing the build because the application declares LockBackendFactory beans %s",
+                        msg, appFactories);
             }
         }
         if (!errors.isEmpty()) {
