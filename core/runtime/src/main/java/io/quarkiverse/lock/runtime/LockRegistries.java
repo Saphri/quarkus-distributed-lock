@@ -2,6 +2,8 @@ package io.quarkiverse.lock.runtime;
 
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
+import java.util.TreeSet;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
@@ -10,6 +12,9 @@ import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import jakarta.annotation.PreDestroy;
+import jakarta.annotation.Priority;
+import jakarta.enterprise.event.Observes;
+import jakarta.interceptor.Interceptor;
 import jakarta.enterprise.event.Event;
 import jakarta.enterprise.inject.Any;
 import jakarta.enterprise.inject.Instance;
@@ -22,6 +27,7 @@ import io.quarkiverse.lock.LockLostEvent;
 import io.quarkiverse.lock.LockRegistry;
 import io.quarkiverse.lock.LockRegistryName;
 import io.quarkiverse.lock.spi.LockBackendFactory;
+import io.quarkus.runtime.StartupEvent;
 import io.smallrye.mutiny.infrastructure.Infrastructure;
 
 /**
@@ -99,6 +105,20 @@ public class LockRegistries {
                 Infrastructure.getDefaultWorkerPool(), lostEvent::fire);
         LOG.debugf("Created lock registry '%s' of type '%s' (instance id %s)", name, type, instanceId);
         return registry;
+    }
+
+    void onStart(@Observes @Priority(Interceptor.Priority.LIBRARY_AFTER) StartupEvent event) {
+        Set<String> names = new TreeSet<>(LockRecorder.knownRegistries);
+        for (LockBackendFactory f : factories) {
+            for (String name : f.configuredRegistries()) {
+                if (f.type().equals(buildConfig.type(name))) {
+                    names.add(name);
+                }
+            }
+        }
+        for (String name : names) {
+            get(name);
+        }
     }
 
     @PreDestroy

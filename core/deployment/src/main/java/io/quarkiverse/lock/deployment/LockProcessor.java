@@ -27,6 +27,7 @@ import io.quarkiverse.lock.OnTimeout;
 import io.quarkiverse.lock.runtime.InMemoryLockBackendFactory;
 import io.quarkiverse.lock.spi.LockBackendFactory;
 import io.quarkiverse.lock.runtime.LockBuildTimeConfig;
+import io.quarkiverse.lock.runtime.LockRecorder;
 import io.quarkiverse.lock.runtime.LockRegistries;
 import io.quarkiverse.lock.runtime.LockRegistryProducer;
 import io.quarkiverse.lock.runtime.LockedInterceptor;
@@ -34,6 +35,8 @@ import io.quarkus.arc.deployment.AdditionalBeanBuildItem;
 import io.quarkus.arc.deployment.ValidationPhaseBuildItem.ValidationErrorBuildItem;
 import io.quarkus.deployment.annotations.BuildProducer;
 import io.quarkus.deployment.annotations.BuildStep;
+import io.quarkus.deployment.annotations.ExecutionTime;
+import io.quarkus.deployment.annotations.Record;
 import io.quarkus.deployment.builditem.AdditionalIndexedClassesBuildItem;
 import io.quarkus.deployment.builditem.CombinedIndexBuildItem;
 import io.quarkus.deployment.builditem.FeatureBuildItem;
@@ -49,6 +52,7 @@ class LockProcessor {
 
     static final DotName LOCKED = DotName.createSimple(Locked.class);
     static final DotName LOCK_KEY = DotName.createSimple(LockKey.class);
+    static final DotName LOCK_REGISTRY_NAME = DotName.createSimple(LockRegistryName.class);
     static final DotName LOCK_BACKEND_FACTORY = DotName.createSimple(LockBackendFactory.class);
     static final DotName UNI = DotName.createSimple("io.smallrye.mutiny.Uni");
     static final DotName MULTI = DotName.createSimple("io.smallrye.mutiny.Multi");
@@ -76,6 +80,25 @@ class LockProcessor {
                         LockedInterceptor.class)
                 .setUnremovable()
                 .build();
+    }
+
+    @BuildStep
+    @Record(ExecutionTime.STATIC_INIT)
+    void knownRegistries(LockBuildTimeConfig config, CombinedIndexBuildItem combinedIndex, LockRecorder recorder) {
+        Set<String> names = new TreeSet<>(config.registries().keySet());
+        names.add(LockRegistryName.DEFAULT);
+        IndexView index = combinedIndex.getIndex();
+        for (AnnotationInstance a : index.getAnnotations(LOCK_REGISTRY_NAME)) {
+            names.add(a.value().asString());
+        }
+        for (AnnotationInstance a : index.getAnnotations(LOCKED)) {
+            AnnotationValue registry = a.value("registry");
+            if (registry != null && !registry.asString().isEmpty()) {
+                names.add(registry.asString());
+            }
+        }
+        names.removeIf(String::isEmpty);
+        recorder.setKnownRegistries(names);
     }
 
     @BuildStep
