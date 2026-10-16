@@ -4,17 +4,15 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.Optional;
 import java.util.Set;
-import java.util.UUID;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
 import java.util.function.Consumer;
+import java.util.function.LongSupplier;
+import java.util.function.LongUnaryOperator;
 import java.util.function.Supplier;
 
 import org.jboss.logging.Logger;
@@ -35,20 +33,19 @@ import io.vertx.core.Context;
 import io.vertx.core.Vertx;
 
 /**
- * The generic part of every registry: JVM-local reentrant lock per key, wait loop with backoff, lease renewal and
- * lost-lease handling. The backend only sees one owner per key per JVM.
+ * The generic part of every registry: JVM-local reentrant lock per key, lease renewal and lost-lease handling. The
+ * backend wait loop lives in {@link AcquisitionEngine}, shared by the blocking and async paths. The backend only sees
+ * one owner per key per JVM.
  */
 public class LockRegistryImpl implements LockRegistry {
 
     private static final Logger LOG = Logger.getLogger(LockRegistryImpl.class);
 
-    static final long MIN_BACKOFF_MILLIS = 100;
-    static final long MAX_BACKOFF_MILLIS = 1000;
     static final long MAX_RENEW_RETRY_MILLIS = 1000;
 
     private final String name;
     private final LockBackend backend;
-    private final String instanceId;
+    private final AcquisitionEngine engine;
     private final Duration defaultWait;
     private final boolean failOnLostLease;
     private final ScheduledExecutorService scheduler;
@@ -60,9 +57,17 @@ public class LockRegistryImpl implements LockRegistry {
     public LockRegistryImpl(String name, LockBackend backend, String instanceId, Duration defaultWait,
             boolean failOnLostLease, ScheduledExecutorService scheduler, Executor worker,
             Consumer<LockLostEvent> lostListener) {
+        this(name, backend, instanceId, defaultWait, failOnLostLease, scheduler, worker, lostListener, System::nanoTime,
+                AcquisitionEngine::randomJitter);
+    }
+
+    /** With an injected clock and jitter for the acquisition loop; see {@link AcquisitionEngine}. */
+    LockRegistryImpl(String name, LockBackend backend, String instanceId, Duration defaultWait,
+            boolean failOnLostLease, ScheduledExecutorService scheduler, Executor worker,
+            Consumer<LockLostEvent> lostListener, LongSupplier nanoTime, LongUnaryOperator jitter) {
         this.name = name;
         this.backend = backend;
-        this.instanceId = instanceId;
+        this.engine = new AcquisitionEngine(name, backend, instanceId, nanoTime, jitter);
         this.defaultWait = defaultWait;
         this.failOnLostLease = failOnLostLease;
         this.scheduler = scheduler;
@@ -177,11 +182,11 @@ public class LockRegistryImpl implements LockRegistry {
                     + "' is not allowed on an event-loop thread; use executeLockedAsync or a Uni-returning @Locked method");
         }
         Thread me = Thread.currentThread();
-        long deadline = deadline(wait);
+        long deadline = engine.deadline(wait);
         KeyState s = ref(key);
         boolean acquired = false;
         try {
-            if (!s.enter(me, deadline, interruptible)) {
+            if (!s.enter(me, deadline, engine.clock(), interruptible)) {
                 throw new LockTimeoutException(key, wait);
             }
             try {
@@ -205,32 +210,17 @@ public class LockRegistryImpl implements LockRegistry {
 
     private void acquireRemote(KeyState s, Duration wait, long deadline, boolean interruptible)
             throws InterruptedException {
-        long backoff = MIN_BACKOFF_MILLIS;
-        RuntimeException lastError = null;
+        AcquisitionEngine.Attempt attempt = engine.attempt(s.key, wait, deadline);
         boolean interrupted = false;
         try {
             while (true) {
-                Optional<Lease> lease = Optional.empty();
-                try {
-                    lease = backend.tryAcquire(s.key, newOwnerId());
-                    lastError = null;
-                } catch (RuntimeException e) {
-                    lastError = e;
-                    LOG.debugf(e, "Backend error acquiring lock '%s' in registry '%s', retrying", s.key, name);
-                }
-                if (lease.isPresent()) {
-                    onAcquired(s, lease.get());
+                Lease lease = attempt.tryAcquire();
+                if (lease != null) {
+                    onAcquired(s, lease);
                     return;
                 }
-                long remainingMillis = deadline == Long.MAX_VALUE ? Long.MAX_VALUE
-                        : TimeUnit.NANOSECONDS.toMillis(deadline - System.nanoTime());
-                if (remainingMillis <= 0) {
-                    throw new LockTimeoutException(s.key, wait, lastError);
-                }
-                long pause = Math.min(jitter(backoff), remainingMillis);
-                backoff = Math.min(backoff * 2, MAX_BACKOFF_MILLIS);
                 try {
-                    awaitHint(s.key, pause);
+                    attempt.awaitHintBlocking();
                 } catch (InterruptedException e) {
                     if (interruptible) {
                         throw e;
@@ -242,18 +232,6 @@ public class LockRegistryImpl implements LockRegistry {
             if (interrupted) {
                 Thread.currentThread().interrupt();
             }
-        }
-    }
-
-    private void awaitHint(String key, long pauseMillis) throws InterruptedException {
-        CompletableFuture<Void> hint = backend.awaitReleaseHint(key, Duration.ofMillis(pauseMillis))
-                .subscribeAsCompletionStage();
-        try {
-            hint.get(pauseMillis + 100, TimeUnit.MILLISECONDS);
-        } catch (ExecutionException | TimeoutException e) {
-            // just retry
-        } finally {
-            hint.cancel(false);
         }
     }
 
@@ -326,27 +304,22 @@ public class LockRegistryImpl implements LockRegistry {
         private final Duration wait;
         private final long deadline;
         private final KeyState state;
+        private final AcquisitionEngine.Attempt attempt;
         private final CompletableFuture<AsyncAcquisition> result = new CompletableFuture<>();
         private boolean localHeld;
-        private long backoff = MIN_BACKOFF_MILLIS;
-        private RuntimeException lastError;
         private volatile boolean released;
 
         AsyncAcquisition(String key, Duration wait) {
             this.key = key;
             this.wait = wait;
-            this.deadline = deadline(wait);
+            this.deadline = engine.deadline(wait);
+            this.attempt = engine.attempt(key, wait, deadline);
             this.state = ref(key);
         }
 
         CompletableFuture<AsyncAcquisition> start() {
             tryLocal();
             return result;
-        }
-
-        private long remainingMillis() {
-            return deadline == Long.MAX_VALUE ? Long.MAX_VALUE
-                    : TimeUnit.NANOSECONDS.toMillis(deadline - System.nanoTime());
         }
 
         private void tryLocal() {
@@ -359,12 +332,12 @@ public class LockRegistryImpl implements LockRegistry {
                 tryRemote();
                 return;
             }
-            long remaining = remainingMillis();
+            long remaining = engine.remainingMillis(deadline);
             if (remaining <= 0) {
                 fail(new LockTimeoutException(key, wait));
                 return;
             }
-            state.whenFree(Math.min(remaining, MAX_BACKOFF_MILLIS)).thenRun(this::tryLocal);
+            state.whenFree(Math.min(remaining, AcquisitionEngine.MAX_BACKOFF_MILLIS)).thenRun(this::tryLocal);
         }
 
         private void tryRemote() {
@@ -384,17 +357,16 @@ public class LockRegistryImpl implements LockRegistry {
                 abandon();
                 return;
             }
-            Optional<Lease> lease = Optional.empty();
+            Lease lease;
             try {
-                lease = backend.tryAcquire(key, newOwnerId());
-                lastError = null;
-            } catch (RuntimeException e) {
-                lastError = e;
-                LOG.debugf(e, "Backend error acquiring lock '%s' in registry '%s', retrying", key, name);
+                lease = attempt.tryAcquire();
+            } catch (LockTimeoutException e) {
+                fail(e);
+                return;
             }
-            if (lease.isPresent()) {
+            if (lease != null) {
                 try {
-                    onAcquired(state, lease.get());
+                    onAcquired(state, lease);
                 } catch (RuntimeException e) {
                     releaseNow();
                     result.completeExceptionally(e);
@@ -406,16 +378,7 @@ public class LockRegistryImpl implements LockRegistry {
                 }
                 return;
             }
-            long remaining = remainingMillis();
-            if (remaining <= 0) {
-                fail(new LockTimeoutException(key, wait, lastError));
-                return;
-            }
-            long pause = Math.min(jitter(backoff), remaining);
-            backoff = Math.min(backoff * 2, MAX_BACKOFF_MILLIS);
-            backend.awaitReleaseHint(key, Duration.ofMillis(pause))
-                    .ifNoItem().after(Duration.ofMillis(pause + 100)).recoverWithItem((Void) null)
-                    .subscribe().with(v -> tryRemote(), f -> tryRemote());
+            attempt.awaitHint().subscribe().with(v -> tryRemote(), f -> tryRemote());
         }
 
         private void fail(Throwable t) {
@@ -459,32 +422,6 @@ public class LockRegistryImpl implements LockRegistry {
     }
 
     // ------------------------------------------------------------------ shared internals
-
-    private static long deadline(Duration wait) {
-        if (wait == null) {
-            return Long.MAX_VALUE;
-        }
-        if (wait.isNegative()) {
-            throw new IllegalArgumentException("Wait timeout must not be negative: " + wait);
-        }
-        long now = System.nanoTime();
-        long nanos;
-        try {
-            nanos = wait.toNanos();
-        } catch (ArithmeticException e) {
-            return Long.MAX_VALUE;
-        }
-        long d = now + nanos;
-        return d < now ? Long.MAX_VALUE : d;
-    }
-
-    private static long jitter(long millis) {
-        return millis * (80 + ThreadLocalRandom.current().nextInt(41)) / 100;
-    }
-
-    private String newOwnerId() {
-        return instanceId + ":" + UUID.randomUUID();
-    }
 
     private KeyState ref(String key) {
         return states.compute(key, (k, s) -> {
