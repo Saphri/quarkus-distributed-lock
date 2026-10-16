@@ -1,10 +1,8 @@
 package io.quarkiverse.lock.deployment;
 
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.stream.Collectors;
@@ -30,6 +28,7 @@ import io.quarkiverse.lock.runtime.LockBuildTimeConfig;
 import io.quarkiverse.lock.runtime.LockRecorder;
 import io.quarkiverse.lock.runtime.LockRegistries;
 import io.quarkiverse.lock.runtime.LockRegistryProducer;
+import io.quarkiverse.lock.runtime.LockedContract;
 import io.quarkiverse.lock.runtime.LockedInterceptor;
 import io.quarkus.arc.deployment.AdditionalBeanBuildItem;
 import io.quarkus.arc.deployment.ValidationPhaseBuildItem.ValidationErrorBuildItem;
@@ -42,7 +41,6 @@ import io.quarkus.deployment.builditem.CombinedIndexBuildItem;
 import io.quarkus.deployment.builditem.FeatureBuildItem;
 import io.quarkus.deployment.builditem.nativeimage.ReflectiveMethodBuildItem;
 import io.quarkus.runtime.configuration.ConfigurationException;
-import io.quarkus.runtime.configuration.DurationConverter;
 
 class LockProcessor {
 
@@ -54,13 +52,6 @@ class LockProcessor {
     static final DotName LOCK_KEY = DotName.createSimple(LockKey.class);
     static final DotName LOCK_REGISTRY_NAME = DotName.createSimple(LockRegistryName.class);
     static final DotName LOCK_BACKEND_FACTORY = DotName.createSimple(LockBackendFactory.class);
-    static final DotName UNI = DotName.createSimple("io.smallrye.mutiny.Uni");
-    static final DotName MULTI = DotName.createSimple("io.smallrye.mutiny.Multi");
-    static final DotName PUBLISHER = DotName.createSimple("org.reactivestreams.Publisher");
-    static final DotName FLOW_PUBLISHER = DotName.createSimple("java.util.concurrent.Flow$Publisher");
-    static final DotName COMPLETION_STAGE = DotName.createSimple("java.util.concurrent.CompletionStage");
-    static final DotName COMPLETABLE_FUTURE = DotName.createSimple("java.util.concurrent.CompletableFuture");
-    static final DotName VOID = DotName.createSimple(Void.class);
 
     @BuildStep
     FeatureBuildItem feature() {
@@ -145,16 +136,13 @@ class LockProcessor {
             AnnotationTarget target = locked.target();
             if (target.kind() == AnnotationTarget.Kind.METHOD) {
                 MethodInfo method = target.asMethod();
-                validate(locked, method, false, problems);
+                validate(locked, method, problems);
                 reflective.produce(new ReflectiveMethodBuildItem("@Locked key placeholders", method));
             } else if (target.kind() == AnnotationTarget.Kind.CLASS) {
                 ClassInfo clazz = target.asClass();
                 String where = "@Locked on class " + clazz.name();
-                if (locked.value().asString().contains("{")) {
-                    problems.add(new IllegalStateException(where
-                            + ": class-level lock keys cannot contain placeholders; annotate the methods instead"));
-                }
-                validateCommon(locked, where, problems);
+                report(where, LockedContract.validateKey(keyOf(locked), List.of(), true), problems);
+                validateWait(locked, where, problems);
                 for (MethodInfo method : clazz.methods()) {
                     if (method.isConstructor() || method.isStaticInitializer() || method.isSynthetic()
                             || java.lang.reflect.Modifier.isStatic(method.flags())
@@ -171,7 +159,7 @@ class LockProcessor {
         }
     }
 
-    private static void validate(AnnotationInstance locked, MethodInfo method, boolean fromClass, List<Throwable> problems) {
+    private static void validate(AnnotationInstance locked, MethodInfo method, List<Throwable> problems) {
         String where = "@Locked on " + method.declaringClass().name() + "#" + method.name();
         if (java.lang.reflect.Modifier.isPrivate(method.flags())) {
             problems.add(new IllegalStateException(where + ": private methods are not intercepted"));
@@ -179,92 +167,43 @@ class LockProcessor {
         if (java.lang.reflect.Modifier.isStatic(method.flags())) {
             problems.add(new IllegalStateException(where + ": static methods are not intercepted"));
         }
-        validateCommon(locked, where, problems);
-        validateReturnType(locked, method, where, problems);
-
-        Map<String, Integer> keyParams = new HashMap<>();
+        List<String> lockKeyNames = new ArrayList<>();
         for (MethodParameterInfo p : method.parameters()) {
             AnnotationInstance lk = p.declaredAnnotation(LOCK_KEY);
-            if (lk == null) {
-                continue;
-            }
-            String name = lk.value().asString();
-            if (name.isEmpty() || name.contains("{") || name.contains("}")) {
-                problems.add(new IllegalStateException(where + ": invalid @LockKey name '" + name + "'"));
-            }
-            if (keyParams.put(name, (int) p.position()) != null) {
-                problems.add(new IllegalStateException(where + ": duplicate @LockKey(\"" + name + "\")"));
-            }
+            lockKeyNames.add(lk == null ? null : lk.value().asString());
         }
-        String key = locked.value().asString();
-        Set<String> used = new HashSet<>();
-        int i = 0;
-        while (i < key.length()) {
-            int open = key.indexOf('{', i);
-            int close = key.indexOf('}', i);
-            if (open < 0) {
-                if (close >= 0) {
-                    problems.add(new IllegalStateException(where + ": unbalanced '}' in lock key '" + key + "'"));
-                }
-                break;
-            }
-            int end = key.indexOf('}', open);
-            if (end < 0 || (close >= 0 && close < open)) {
-                problems.add(new IllegalStateException(where + ": unbalanced braces in lock key '" + key + "'"));
-                break;
-            }
-            String name = key.substring(open + 1, end);
-            if (!keyParams.containsKey(name)) {
-                problems.add(new IllegalStateException(where + ": lock key '" + key + "' references {" + name
-                        + "} but no parameter is annotated @LockKey(\"" + name + "\")"));
-            }
-            used.add(name);
-            i = end + 1;
-        }
-        for (String name : keyParams.keySet()) {
-            if (!used.contains(name)) {
-                problems.add(new IllegalStateException(where + ": @LockKey(\"" + name + "\") is not used in lock key '"
-                        + key + "'"));
-            }
-        }
+        report(where, LockedContract.validateKey(keyOf(locked), lockKeyNames, false), problems);
+        validateWait(locked, where, problems);
+        validateReturnType(locked, method, where, problems);
     }
 
-    private static void validateCommon(AnnotationInstance locked, String where, List<Throwable> problems) {
-        if (locked.value() == null || locked.value().asString().isBlank()) {
-            problems.add(new IllegalStateException(where + ": the lock key must not be empty"));
-        }
+    private static String keyOf(AnnotationInstance locked) {
+        return locked.value() == null ? null : locked.value().asString();
+    }
+
+    private static void validateWait(AnnotationInstance locked, String where, List<Throwable> problems) {
         AnnotationValue wait = locked.value("waitTimeout");
-        if (wait != null && !wait.asString().isEmpty()) {
-            try {
-                if (DurationConverter.parseDuration(wait.asString()).isNegative()) {
-                    problems.add(new IllegalStateException(where + ": waitTimeout must not be negative"));
-                }
-            } catch (RuntimeException e) {
-                problems.add(new IllegalStateException(where + ": invalid waitTimeout '" + wait.asString() + "'", e));
-            }
+        try {
+            LockedContract.parseWait(wait == null ? null : wait.asString());
+        } catch (IllegalArgumentException e) {
+            problems.add(new IllegalStateException(where + ": " + e.getMessage(), e.getCause()));
         }
     }
 
     private static void validateReturnType(AnnotationInstance locked, MethodInfo method, String where,
             List<Throwable> problems) {
         Type rt = method.returnType();
-        DotName raw = rt.name();
-        if (raw.equals(MULTI) || raw.equals(PUBLISHER) || raw.equals(FLOW_PUBLISHER)) {
-            problems.add(new IllegalStateException(where + ": streams (" + raw.withoutPackagePrefix()
-                    + ") are not supported; return Uni or CompletionStage, or lock programmatically"));
-            return;
-        }
+        String typeArgument = rt.kind() == Type.Kind.PARAMETERIZED_TYPE
+                ? rt.asParameterizedType().arguments().get(0).name().toString()
+                : null;
         AnnotationValue onTimeout = locked.value("onTimeout");
-        if (onTimeout != null && OnTimeout.valueOf(onTimeout.asEnum()) == OnTimeout.SKIP) {
-            boolean ok = rt.kind() == Type.Kind.VOID
-                    || ((raw.equals(UNI) || raw.equals(COMPLETION_STAGE) || raw.equals(COMPLETABLE_FUTURE))
-                            && rt.kind() == Type.Kind.PARAMETERIZED_TYPE
-                            && rt.asParameterizedType().arguments().get(0).name().equals(VOID));
-            if (!ok) {
-                problems.add(new IllegalStateException(where
-                        + ": onTimeout = SKIP requires a void, Uni<Void> or CompletionStage<Void> return type, found "
-                        + rt));
-            }
+        OnTimeout mode = onTimeout == null ? OnTimeout.THROW : OnTimeout.valueOf(onTimeout.asEnum());
+        report(where, LockedContract.validateReturnType(rt.name().toString(), typeArgument, mode), problems);
+    }
+
+    private static void report(String where, List<String> messages, List<Throwable> problems) {
+        for (String message : messages) {
+            problems.add(new IllegalStateException(where + ": " + message));
         }
     }
 }
