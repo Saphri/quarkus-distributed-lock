@@ -105,7 +105,7 @@ class AcquisitionEngineTest {
         // the last pause is cut to what is left of the wait
         assertThat(backend.pauses).containsExactly(100L, 200L, 400L, 300L);
         assertThat(backend.attempts).isEqualTo(5);
-        assertThat(((LockRegistryImpl) registry).activeKeys()).isZero();
+        assertThat(registry.activeKeys()).isZero();
     }
 
     @Test
@@ -123,7 +123,7 @@ class AcquisitionEngineTest {
         assertThatThrownBy(() -> locked.await().atMost(Duration.ofSeconds(5)))
                 .isInstanceOf(LockTimeoutException.class);
         assertThat(backend.pauses).containsExactly(100L, 200L, 400L, 300L);
-        assertThat(((LockRegistryImpl) registry).activeKeys()).isZero();
+        assertThat(registry.activeKeys()).isZero();
     }
 
     @Test

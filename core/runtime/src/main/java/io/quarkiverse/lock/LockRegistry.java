@@ -25,6 +25,18 @@ public interface LockRegistry {
     String name();
 
     /**
+     * The wait timeout used by the methods that take no explicit wait, and by {@code @Locked} methods that declare no
+     * {@code waitTimeout}. {@link Duration#ZERO} means a single attempt.
+     */
+    Duration defaultWait();
+
+    /**
+     * Number of keys with live local state in this registry: held, or being waited for. Zero once every lock has been
+     * released and no one is waiting, which makes it useful for leak assertions.
+     */
+    int activeKeys();
+
+    /**
      * Runs {@code task} while holding the lock {@code key}, waiting at most the configured default wait timeout.
      *
      * @throws LockTimeoutException if the lock could not be acquired in time
