@@ -127,7 +127,7 @@ class NatsLockTest {
         assertThat(status.getTtl()).isEqualTo(LEASE);
         assertThat(status.getMaxHistoryPerKey()).isEqualTo(1);
         // limit markers on: waiters see lease age-outs instead of polling
-        assertThat(status.getLimitMarkerTtl()).isNotNull();
+        assertThat(status.getLimitMarkerTtl()).isEqualTo(Duration.ofSeconds(1));
         assertThat(c.keyValueManagement().getStatus("locks_jobs").getTtl()).isEqualTo(Duration.ofSeconds(3));
         // the unnamed quarkus.lock.nats.* group is not mistaken for a registry called "nats"
         assertThat(registries.created()).containsOnlyKeys(LockRegistryName.DEFAULT, "jobs");
