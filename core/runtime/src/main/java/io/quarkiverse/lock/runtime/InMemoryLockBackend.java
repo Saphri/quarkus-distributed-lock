@@ -34,6 +34,6 @@ public class InMemoryLockBackend implements LockBackend {
 
     @Override
     public Set<Capability> capabilities() {
-        return EnumSet.of(Capability.FENCING, Capability.NON_BLOCKING);
+        return EnumSet.of(Capability.NON_BLOCKING);
     }
 }
