@@ -59,6 +59,9 @@ Uni<String> u = locks.executeLockedAsync("someLockKey", () -> client.callAsync()
 
 ```java
 public interface LockRegistry {
+    String name();                                                       // LockRegistryName.DEFAULT for the default
+    Duration defaultWait();                                              // configured wait-timeout
+    int activeKeys();                                                    // keys held or waited for locally
     <T> T executeLocked(String key, Callable<T> task);                  // default wait from config
     <T> T executeLocked(String key, Duration wait, Callable<T> task);
     void runLocked(String key, Runnable task);
