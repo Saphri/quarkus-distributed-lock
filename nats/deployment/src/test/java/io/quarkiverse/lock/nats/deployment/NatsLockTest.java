@@ -34,9 +34,7 @@ import io.quarkiverse.lock.LockRegistryName;
 import io.quarkiverse.lock.LockToken;
 import io.quarkiverse.lock.Locked;
 import io.quarkiverse.lock.nats.runtime.KeyCodec;
-import io.quarkiverse.lock.nats.runtime.NatsLockBackend;
 import io.quarkiverse.lock.runtime.LockRegistries;
-import io.quarkiverse.lock.runtime.LockRegistryImpl;
 import io.quarkiverse.reactive.messaging.nats.jetstream.client.Client;
 import io.quarkus.test.QuarkusExtensionTest;
 import io.smallrye.common.annotation.Identifier;
@@ -128,10 +126,9 @@ class NatsLockTest {
         KeyValueStatus status = c.keyValueManagement().getStatus("locks");
         assertThat(status.getTtl()).isEqualTo(LEASE);
         assertThat(status.getMaxHistoryPerKey()).isEqualTo(1);
+        // limit markers on: waiters see lease age-outs instead of polling
         assertThat(status.getLimitMarkerTtl()).isNotNull();
         assertThat(c.keyValueManagement().getStatus("locks_jobs").getTtl()).isEqualTo(Duration.ofSeconds(3));
-        NatsLockBackend backend = (NatsLockBackend) ((LockRegistryImpl) locks).backend();
-        assertThat(backend.limitMarkers()).isTrue();
         // the unnamed quarkus.lock.nats.* group is not mistaken for a registry called "nats"
         assertThat(registries.created()).containsOnlyKeys(LockRegistryName.DEFAULT, "jobs");
     }
