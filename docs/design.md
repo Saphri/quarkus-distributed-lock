@@ -140,7 +140,7 @@ public interface LockBackend {                        // implemented by each pro
     Optional<Lease> renew(Lease lease);                                        // empty = lost
     void release(Lease lease);                                                 // CAS on lease identity
     Uni<Void> awaitReleaseHint(String key, Duration max);   // optional: wake waiters early (watch/pubsub); default = sleep
-    Capabilities capabilities();                            // e.g. FENCING, RELEASE_NOTIFICATION, SERVER_CLOCK
+    Capabilities capabilities();                            // e.g. NON_BLOCKING
 }
 
 public record Lease(String key, String ownerId, long fencing, Instant expiresAt, Object backendState) {}

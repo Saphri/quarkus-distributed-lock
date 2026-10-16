@@ -188,7 +188,7 @@ public class NatsLockBackend implements LockBackend {
 
     @Override
     public Set<Capability> capabilities() {
-        return EnumSet.of(Capability.FENCING, Capability.SERVER_CLOCK, Capability.RELEASE_NOTIFICATION);
+        return EnumSet.noneOf(Capability.class);
     }
 
     @Override
