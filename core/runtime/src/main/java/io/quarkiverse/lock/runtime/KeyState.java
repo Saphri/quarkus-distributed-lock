@@ -7,6 +7,7 @@ import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.ReentrantLock;
+import java.util.function.LongSupplier;
 
 import io.quarkiverse.lock.LockToken;
 import io.quarkiverse.lock.spi.Lease;
@@ -53,14 +54,15 @@ final class KeyState {
     }
 
     /**
-     * Waits for the local lock until {@code deadlineNanos} ({@link Long#MAX_VALUE} = no limit).
+     * Waits for the local lock until {@code deadlineNanos} on {@code nanoTime} ({@link Long#MAX_VALUE} = no limit).
      */
-    boolean enter(Object who, long deadlineNanos, boolean interruptible) throws InterruptedException {
+    boolean enter(Object who, long deadlineNanos, LongSupplier nanoTime, boolean interruptible)
+            throws InterruptedException {
         boolean interrupted = false;
         monitor.lock();
         try {
             while (!enterLocked(who)) {
-                long remaining = deadlineNanos == Long.MAX_VALUE ? Long.MAX_VALUE : deadlineNanos - System.nanoTime();
+                long remaining = deadlineNanos == Long.MAX_VALUE ? Long.MAX_VALUE : deadlineNanos - nanoTime.getAsLong();
                 if (remaining <= 0) {
                     return false;
                 }

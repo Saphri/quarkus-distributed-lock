@@ -90,7 +90,7 @@ class LeaseRenewalTest {
 
         @Override
         public Set<Capability> capabilities() {
-            return EnumSet.of(Capability.FENCING);
+            return EnumSet.noneOf(Capability.class);
         }
     }
 

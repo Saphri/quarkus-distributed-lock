@@ -21,8 +21,9 @@ import io.quarkiverse.lock.LockRegistry;
 import io.quarkiverse.lock.LockTimeoutException;
 import io.quarkiverse.lock.Locked;
 import io.quarkiverse.lock.OnTimeout;
+import io.quarkiverse.lock.runtime.LockedContract.BoundKey;
+import io.quarkiverse.lock.runtime.LockedContract.Dispatch;
 import io.quarkus.arc.ArcInvocationContext;
-import io.quarkus.runtime.configuration.DurationConverter;
 import io.smallrye.mutiny.Uni;
 
 /**
@@ -42,10 +43,10 @@ public class LockedInterceptor {
     @AroundInvoke
     Object lock(InvocationContext ctx) throws Exception {
         Plan plan = plans.computeIfAbsent(ctx.getMethod(), m -> plan(m, binding(ctx)));
-        String key = plan.key(ctx.getParameters());
+        String key = plan.key.resolve(ctx.getParameters());
         LockRegistry registry = plan.registry != null ? plan.registry : registries.get(plan.registryName);
         Duration wait = plan.waitTimeout != null ? plan.waitTimeout : registry.defaultWait();
-        switch (plan.kind) {
+        switch (plan.dispatch) {
             case UNI:
                 return lockedUni(registry, key, wait, plan, ctx);
             case COMPLETION_STAGE:
@@ -109,85 +110,31 @@ public class LockedInterceptor {
         return locked;
     }
 
-    enum Kind {
-        SYNC,
-        UNI,
-        COMPLETION_STAGE
-    }
-
     private Plan plan(Method method, Locked locked) {
-        Kind kind = Uni.class.isAssignableFrom(method.getReturnType()) ? Kind.UNI
-                : CompletionStage.class.isAssignableFrom(method.getReturnType()) ? Kind.COMPLETION_STAGE : Kind.SYNC;
-        Duration wait = locked.waitTimeout().isEmpty() ? null : DurationConverter.parseDuration(locked.waitTimeout());
+        Dispatch dispatch = LockedContract.classify(method.getReturnType().getName());
+        Duration wait = LockedContract.parseWait(locked.waitTimeout());
         String registryName = locked.registry();
         LockRegistry registry = registries.get(registryName);
-        KeyTemplate template = KeyTemplate.parse(locked.value(), method);
-        return new Plan(kind, wait, registryName, registry, locked.onTimeout(), template);
+        BoundKey key = LockedContract.bind(locked.value(), lockKeyNames(method));
+        return new Plan(dispatch, wait, registryName, registry, locked.onTimeout(), key);
     }
 
-    private record Plan(Kind kind, Duration waitTimeout, String registryName, LockRegistry registry, OnTimeout onTimeout,
-            KeyTemplate template) {
-
-        String key(Object[] params) {
-            return template.render(params);
+    private static List<String> lockKeyNames(Method method) {
+        Annotation[][] annotations = method.getParameterAnnotations();
+        List<String> names = new ArrayList<>(annotations.length);
+        for (Annotation[] parameter : annotations) {
+            String name = null;
+            for (Annotation a : parameter) {
+                if (a instanceof LockKey k) {
+                    name = k.value();
+                }
+            }
+            names.add(name);
         }
+        return names;
     }
 
-    /**
-     * A key with {@code {name}} placeholders bound to {@link LockKey} parameter positions. The same parsing rules are
-     * enforced at build time.
-     */
-    record KeyTemplate(List<String> literals, int[] paramIndexes) {
-
-        static KeyTemplate parse(String template, Method method) {
-            Map<String, Integer> params = new ConcurrentHashMap<>();
-            Annotation[][] annotations = method.getParameterAnnotations();
-            for (int i = 0; i < annotations.length; i++) {
-                for (Annotation a : annotations[i]) {
-                    if (a instanceof LockKey k) {
-                        params.put(k.value(), i);
-                    }
-                }
-            }
-            List<String> literals = new ArrayList<>();
-            List<Integer> indexes = new ArrayList<>();
-            StringBuilder current = new StringBuilder();
-            int i = 0;
-            while (i < template.length()) {
-                char c = template.charAt(i);
-                if (c == '{') {
-                    int end = template.indexOf('}', i);
-                    if (end < 0) {
-                        throw new IllegalArgumentException("Unclosed placeholder in lock key '" + template + "'");
-                    }
-                    String name = template.substring(i + 1, end);
-                    Integer idx = params.get(name);
-                    if (idx == null) {
-                        throw new IllegalArgumentException("Lock key '" + template + "' on " + method
-                                + " references {" + name + "} but no parameter is annotated @LockKey(\"" + name + "\")");
-                    }
-                    literals.add(current.toString());
-                    current.setLength(0);
-                    indexes.add(idx);
-                    i = end + 1;
-                } else {
-                    current.append(c);
-                    i++;
-                }
-            }
-            literals.add(current.toString());
-            return new KeyTemplate(List.copyOf(literals), indexes.stream().mapToInt(Integer::intValue).toArray());
-        }
-
-        String render(Object[] params) {
-            if (paramIndexes.length == 0) {
-                return literals.get(0);
-            }
-            StringBuilder sb = new StringBuilder(literals.get(0));
-            for (int i = 0; i < paramIndexes.length; i++) {
-                sb.append(params[paramIndexes[i]]).append(literals.get(i + 1));
-            }
-            return sb.toString();
-        }
+    private record Plan(Dispatch dispatch, Duration waitTimeout, String registryName, LockRegistry registry,
+            OnTimeout onTimeout, BoundKey key) {
     }
 }
