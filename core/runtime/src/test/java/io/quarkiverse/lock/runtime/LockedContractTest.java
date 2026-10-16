@@ -41,6 +41,8 @@ class LockedContractTest {
                 .containsExactly("duplicate @LockKey(\"id\")");
         assertThat(LockedContract.validateKey("k", names("a}"), false)).contains("invalid @LockKey name 'a}'");
         assertThat(LockedContract.validateKey(" ", names(), false)).containsExactly("the lock key must not be empty");
+        assertThat(LockedContract.validateKey(" ", names("id"), false)).containsExactlyInAnyOrder(
+                "the lock key must not be empty", "@LockKey(\"id\") is not used in lock key ' '");
         assertThat(LockedContract.validateKey("{x", names("x"), false))
                 .containsExactly("unbalanced braces in lock key '{x'");
     }
@@ -95,15 +97,13 @@ class LockedContractTest {
     }
 
     @Test
-    void parsesAndResolvesWait() {
+    void parsesWait() {
         assertThat(LockedContract.parseWait("")).isNull();
         assertThat(LockedContract.parseWait(null)).isNull();
         assertThat(LockedContract.parseWait("5s")).isEqualTo(Duration.ofSeconds(5));
         assertThat(LockedContract.parseWait("PT0S")).isEqualTo(Duration.ZERO);
         assertThatThrownBy(() -> LockedContract.parseWait("soon")).hasMessage("invalid waitTimeout 'soon'");
         assertThatThrownBy(() -> LockedContract.parseWait("-5s")).hasMessage("waitTimeout must not be negative");
-        assertThat(LockedContract.resolveWait(null, Duration.ofSeconds(3))).isEqualTo(Duration.ofSeconds(3));
-        assertThat(LockedContract.resolveWait(Duration.ZERO, Duration.ofSeconds(3))).isEqualTo(Duration.ZERO);
     }
 
     private static List<String> names(String... names) {
