@@ -102,3 +102,17 @@ This is the central architectural concept for the project: lock lifetime is mana
 - For backend-specific work, review `docs/design.md` before changing lease or contention semantics; the design doc captures the intended API and protocol behavior.
 - The project already uses JUnit and Quarkus extension test patterns; follow those conventions when adding tests rather than introducing ad hoc test harnesses.
 - Use the Maven wrapper (`./mvnw`) rather than a system Maven installation so the project stays on the pinned Quarkus version and wrapper configuration.
+
+## Agent skills
+
+### Issue tracker
+
+Issues live in GitHub Issues on `Saphri/quarkus-distributed-lock`, operated via the `gh` CLI. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Five canonical triage roles, each label string equal to its role name. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: `GLOSSARY.md` at the repo root and ADRs under `docs/adr/`. See `docs/agents/domain.md`.
