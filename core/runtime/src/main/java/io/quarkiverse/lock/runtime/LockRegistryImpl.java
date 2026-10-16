@@ -81,11 +81,12 @@ public class LockRegistryImpl implements LockRegistry {
         return backend;
     }
 
+    @Override
     public Duration defaultWait() {
         return defaultWait;
     }
 
-    /** Number of keys with live local state (held, or being waited for). */
+    @Override
     public int activeKeys() {
         return states.size();
     }

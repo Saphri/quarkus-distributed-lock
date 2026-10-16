@@ -28,7 +28,6 @@ import io.quarkiverse.lock.LockRegistryName;
 import io.quarkiverse.lock.LockTimeoutException;
 import io.quarkiverse.lock.LockToken;
 import io.quarkiverse.lock.LockedExecutionException;
-import io.quarkiverse.lock.runtime.LockRegistryImpl;
 import io.quarkus.test.QuarkusExtensionTest;
 
 class ProgrammaticLockTest {
@@ -60,9 +59,9 @@ class ProgrammaticLockTest {
     @Test
     void registriesAreConfiguredWithFallback() {
         assertThat(locks.name()).isEqualTo(LockRegistryName.DEFAULT);
-        assertThat(((LockRegistryImpl) locks).defaultWait()).isEqualTo(Duration.ofSeconds(2));
+        assertThat(locks.defaultWait()).isEqualTo(Duration.ofSeconds(2));
         assertThat(jobs.name()).isEqualTo("jobs");
-        assertThat(((LockRegistryImpl) jobs).defaultWait()).isEqualTo(Duration.ZERO);
+        assertThat(jobs.defaultWait()).isEqualTo(Duration.ZERO);
     }
 
     @Test
@@ -88,7 +87,7 @@ class ProgrammaticLockTest {
         }
         assertThat(count).hasValue(400);
         assertThat(maxInside).hasValue(1);
-        assertThat(((LockRegistryImpl) locks).activeKeys()).isZero();
+        assertThat(locks.activeKeys()).isZero();
     }
 
     @Test
@@ -163,7 +162,7 @@ class ProgrammaticLockTest {
         })).isInstanceOf(LockedExecutionException.class).hasCauseInstanceOf(IOException.class);
         // released both times
         assertThat(locks.tryExecuteLocked("ex", Duration.ZERO, () -> 1)).contains(1);
-        assertThat(((LockRegistryImpl) locks).activeKeys()).isZero();
+        assertThat(locks.activeKeys()).isZero();
     }
 
     @Test
@@ -236,7 +235,7 @@ class ProgrammaticLockTest {
         } finally {
             lock.unlock();
         }
-        assertThat(((LockRegistryImpl) locks).activeKeys()).isZero();
+        assertThat(locks.activeKeys()).isZero();
     }
 
     @Test

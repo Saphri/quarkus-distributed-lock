@@ -18,7 +18,6 @@ import org.junit.jupiter.api.extension.RegisterExtension;
 
 import io.quarkiverse.lock.LockRegistry;
 import io.quarkiverse.lock.LockTimeoutException;
-import io.quarkiverse.lock.runtime.LockRegistryImpl;
 import io.quarkus.test.QuarkusExtensionTest;
 import io.smallrye.mutiny.Uni;
 import io.smallrye.mutiny.subscription.Cancellable;
@@ -50,7 +49,7 @@ class AsyncLockTest {
         }
         CompletableFuture.allOf(all.toArray(CompletableFuture[]::new)).join();
         assertThat(max).hasValue(1);
-        assertThat(((LockRegistryImpl) locks).activeKeys()).isZero();
+        assertThat(locks.activeKeys()).isZero();
     }
 
     @Test
@@ -83,7 +82,7 @@ class AsyncLockTest {
             throw boom;
         }).await().atMost(Duration.ofSeconds(5))).isSameAs(boom);
         assertThat(locks.tryExecuteLocked("t", Duration.ofSeconds(1), () -> "free")).contains("free");
-        assertThat(((LockRegistryImpl) locks).activeKeys()).isZero();
+        assertThat(locks.activeKeys()).isZero();
     }
 
     @Test
@@ -108,7 +107,7 @@ class AsyncLockTest {
         release.complete(null);
         assertThat(locks.tryExecuteLocked("cancel", Duration.ofSeconds(3), () -> "x")).contains("x");
         Thread.sleep(1200);
-        assertThat(((LockRegistryImpl) locks).activeKeys()).isZero();
+        assertThat(locks.activeKeys()).isZero();
     }
 
     @Test
