@@ -45,7 +45,8 @@ public class LockedInterceptor {
         Plan plan = plans.computeIfAbsent(ctx.getMethod(), m -> plan(m, binding(ctx)));
         String key = plan.key.resolve(ctx.getParameters());
         LockRegistry registry = plan.registry != null ? plan.registry : registries.get(plan.registryName);
-        Duration wait = LockedContract.resolveWait(plan.waitTimeout, ((LockRegistryImpl) registry).defaultWait());
+        Duration wait = plan.waitTimeout != null ? plan.waitTimeout
+                : ((LockRegistryImpl) registry).defaultWait();
         switch (plan.dispatch) {
             case UNI:
                 return lockedUni(registry, key, wait, plan, ctx);

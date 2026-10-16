@@ -34,7 +34,7 @@ public final class LockedContract {
     /**
      * A lock key split into literals and {@code {name}} placeholders: {@code literals.size() == placeholders.size() + 1}.
      */
-    public record KeyTemplate(List<String> literals, List<String> placeholders) {
+    record KeyTemplate(List<String> literals, List<String> placeholders) {
     }
 
     /**
@@ -42,7 +42,7 @@ public final class LockedContract {
      *
      * @throws IllegalArgumentException if the key is not well formed
      */
-    public static KeyTemplate parse(String key) {
+    static KeyTemplate parse(String key) {
         List<String> literals = new ArrayList<>();
         List<String> placeholders = new ArrayList<>();
         StringBuilder current = new StringBuilder();
@@ -84,16 +84,16 @@ public final class LockedContract {
      */
     public static List<String> validateKey(String key, List<String> lockKeyNames, boolean classLevel) {
         List<String> problems = new ArrayList<>();
+        KeyTemplate template = null;
         if (key == null || key.isBlank()) {
             problems.add("the lock key must not be empty");
-            return problems;
-        }
-        KeyTemplate template;
-        try {
-            template = parse(key);
-        } catch (IllegalArgumentException e) {
-            problems.add(e.getMessage());
-            template = null;
+            template = new KeyTemplate(List.of(""), List.of());
+        } else {
+            try {
+                template = parse(key);
+            } catch (IllegalArgumentException e) {
+                problems.add(e.getMessage());
+            }
         }
         if (classLevel) {
             if (template != null && !template.placeholders().isEmpty()) {
@@ -258,10 +258,5 @@ public final class LockedContract {
             throw new IllegalArgumentException("waitTimeout must not be negative");
         }
         return wait;
-    }
-
-    /** {@link #parseWait} with the registry default applied. */
-    public static Duration resolveWait(Duration annotated, Duration registryDefault) {
-        return annotated != null ? annotated : registryDefault;
     }
 }
