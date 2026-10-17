@@ -31,17 +31,17 @@ import io.quarkiverse.lock.spi.LockBackend;
  */
 final class KeyState {
 
-    // the registry's category, so lease warnings keep the logger they have always had
-    private static final Logger LOG = Logger.getLogger(LockRegistryImpl.class);
+    private static final Logger LOG = Logger.getLogger(KeyState.class);
 
     static final long MAX_RENEW_RETRY_MILLIS = 1000;
 
+    /** What the lease lifecycle of every key in one registry shares. */
+    record Leasing(String registry, LockBackend backend, ScheduledExecutorService scheduler,
+            Consumer<LockLostEvent> lostListener, Supplier<Instant> clock) {
+    }
+
     final String key;
-    private final String registry;
-    private final LockBackend backend;
-    private final ScheduledExecutorService scheduler;
-    private final Consumer<LockLostEvent> lostListener;
-    private final Supplier<Instant> clock;
+    private final Leasing leasing;
 
     /** Threads and async acquisitions using this state; guarded by the registry map's per-key lock. */
     int refs;
@@ -60,14 +60,9 @@ final class KeyState {
     private volatile long leaseMillis;
     private ScheduledFuture<?> renewal;
 
-    KeyState(String key, String registry, LockBackend backend, ScheduledExecutorService scheduler,
-            Consumer<LockLostEvent> lostListener, Supplier<Instant> clock) {
+    KeyState(String key, Leasing leasing) {
         this.key = key;
-        this.registry = registry;
-        this.backend = backend;
-        this.scheduler = scheduler;
-        this.lostListener = lostListener;
-        this.clock = clock;
+        this.leasing = leasing;
     }
 
     boolean tryEnter(Object who) {
@@ -199,13 +194,13 @@ final class KeyState {
     void onAcquired(Lease lease) {
         remote.lock();
         try {
-            Instant now = clock.get();
+            Instant now = leasing.clock().get();
             this.lease = lease;
             this.lost = false;
             this.token = new LockToken(key, lease.ownerId(), lease.fencing(), now);
             if (lease.expires()) {
                 leaseMillis = Duration.between(now, lease.expiresAt()).toMillis();
-                scheduleRenewal(lease, renewInterval(lease));
+                scheduleRenewal(lease, renewInterval(leaseMillis));
             }
         } finally {
             remote.unlock();
@@ -243,30 +238,33 @@ final class KeyState {
             remote.unlock();
         }
         if (wasLost) {
-            LOG.warnf("Released lock '%s' in registry '%s' whose lease (fencing %d) had been lost", key, registry,
+            LOG.warnf("Released lock '%s' in registry '%s' whose lease (fencing %d) had been lost", key, leasing.registry(),
                     heldToken.fencing());
             return heldToken;
         }
         if (held != null) {
             try {
-                backend.release(held);
+                leasing.backend().release(held);
             } catch (RuntimeException e) {
-                LOG.warnf(e, "Could not release lock '%s' in registry '%s'; it will expire", key, registry);
+                LOG.warnf(e, "Could not release lock '%s' in registry '%s'; it will expire", key, leasing.registry());
             }
         }
         return null;
     }
 
     private long renewInterval(Lease lease) {
-        long ttl = Duration.between(clock.get(), lease.expiresAt()).toMillis();
-        return Math.max(ttl / 3, 10);
+        return renewInterval(Duration.between(leasing.clock().get(), lease.expiresAt()).toMillis());
+    }
+
+    private static long renewInterval(long ttlMillis) {
+        return Math.max(ttlMillis / 3, 10);
     }
 
     private void scheduleRenewal(Lease lease, long delayMillis) {
         if (!lease.expires()) {
             return;
         }
-        renewal = scheduler.schedule(() -> renew(lease), delayMillis, TimeUnit.MILLISECONDS);
+        renewal = leasing.scheduler().schedule(() -> renew(lease), delayMillis, TimeUnit.MILLISECONDS);
     }
 
     private void renew(Lease expected) {
@@ -277,7 +275,7 @@ final class KeyState {
                 return;
             }
             try {
-                Optional<Lease> renewed = backend.renew(expected);
+                Optional<Lease> renewed = leasing.backend().renew(expected);
                 if (renewed.isPresent()) {
                     Lease r = renewed.get();
                     lease = r;
@@ -288,23 +286,23 @@ final class KeyState {
                 }
             } catch (RuntimeException e) {
                 // transient error: keep retrying until shortly before the lease would expire server-side
-                long remaining = Duration.between(clock.get(), expected.expiresAt()).toMillis();
+                long remaining = Duration.between(leasing.clock().get(), expected.expiresAt()).toMillis();
                 long safety = Math.min(MAX_RENEW_RETRY_MILLIS, leaseMillis / 10);
                 if (remaining <= safety) {
                     lostEvent = markLost(e);
                 } else {
-                    LOG.debugf(e, "Renewal of lock '%s' in registry '%s' failed, retrying", key, registry);
+                    LOG.debugf(e, "Renewal of lock '%s' in registry '%s' failed, retrying", key, leasing.registry());
                     scheduleRenewal(expected, Math.max(10, Math.min(MAX_RENEW_RETRY_MILLIS, (remaining - safety) / 2)));
                 }
             }
         } catch (Throwable t) {
-            LOG.errorf(t, "Unexpected error renewing lock '%s' in registry '%s'", key, registry);
+            LOG.errorf(t, "Unexpected error renewing lock '%s' in registry '%s'", key, leasing.registry());
         } finally {
             remote.unlock();
         }
         if (lostEvent != null) {
             try {
-                lostListener.accept(lostEvent);
+                leasing.lostListener().accept(lostEvent);
             } catch (Throwable t) {
                 LOG.errorf(t, "LockLostEvent observer failed for lock '%s'", key);
             }
@@ -316,11 +314,11 @@ final class KeyState {
         LockToken lostToken = token;
         if (cause == null) {
             LOG.warnf("Lease on lock '%s' in registry '%s' (fencing %d) was lost while held: another owner took it",
-                    key, registry, lostToken.fencing());
+                    key, leasing.registry(), lostToken.fencing());
         } else {
             LOG.warnf("Lease on lock '%s' in registry '%s' (fencing %d) was lost while held: could not renew before"
-                    + " expiry (%s)", key, registry, lostToken.fencing(), cause.toString());
+                    + " expiry (%s)", key, leasing.registry(), lostToken.fencing(), cause.toString());
         }
-        return new LockLostEvent(registry, lostToken, cause);
+        return new LockLostEvent(leasing.registry(), lostToken, cause);
     }
 }
