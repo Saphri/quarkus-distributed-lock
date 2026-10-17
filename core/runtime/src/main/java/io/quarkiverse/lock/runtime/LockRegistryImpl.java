@@ -42,11 +42,9 @@ public class LockRegistryImpl implements LockRegistry {
     private final AcquisitionEngine engine;
     private final Duration defaultWait;
     private final boolean failOnLostLease;
-    private final ScheduledExecutorService scheduler;
     private final Executor worker;
-    private final Consumer<LockLostEvent> lostListener;
     private final boolean nonBlocking;
-    private final Supplier<Instant> wallClock;
+    private final KeyState.Leasing leasing;
     private final ConcurrentHashMap<String, KeyState> states = new ConcurrentHashMap<>();
 
     public LockRegistryImpl(String name, LockBackend backend, String instanceId, Duration defaultWait,
@@ -69,10 +67,8 @@ public class LockRegistryImpl implements LockRegistry {
         this.engine = new AcquisitionEngine(name, backend, instanceId, nanoTime, jitter);
         this.defaultWait = defaultWait;
         this.failOnLostLease = failOnLostLease;
-        this.scheduler = scheduler;
         this.worker = worker;
-        this.lostListener = lostListener;
-        this.wallClock = wallClock;
+        this.leasing = new KeyState.Leasing(name, backend, scheduler, lostListener, wallClock);
         Set<Capability> caps = backend.capabilities();
         this.nonBlocking = caps.contains(Capability.NON_BLOCKING);
     }
@@ -426,7 +422,7 @@ public class LockRegistryImpl implements LockRegistry {
 
     private KeyState ref(String key) {
         return states.compute(key, (k, s) -> {
-            KeyState state = s == null ? new KeyState(k, name, backend, scheduler, lostListener, wallClock) : s;
+            KeyState state = s == null ? new KeyState(k, leasing) : s;
             state.refs++;
             return state;
         });
