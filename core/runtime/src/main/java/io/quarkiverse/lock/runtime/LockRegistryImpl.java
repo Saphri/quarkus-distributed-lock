@@ -15,8 +15,6 @@ import java.util.function.LongSupplier;
 import java.util.function.LongUnaryOperator;
 import java.util.function.Supplier;
 
-import org.jboss.logging.Logger;
-
 import io.quarkiverse.lock.DistributedLock;
 import io.quarkiverse.lock.LockLostEvent;
 import io.quarkiverse.lock.LockLostException;
@@ -33,46 +31,44 @@ import io.vertx.core.Context;
 import io.vertx.core.Vertx;
 
 /**
- * The generic part of every registry: JVM-local reentrant lock per key, lease renewal and lost-lease handling. The
- * backend wait loop lives in {@link AcquisitionEngine}, shared by the blocking and async paths. The backend only sees
- * one owner per key per JVM.
+ * The generic part of every registry: per-key {@link KeyState} (JVM-local reentrant lock and lease lifecycle), driven by
+ * the blocking and async paths. The backend wait loop lives in {@link AcquisitionEngine}, shared by both paths. The
+ * backend only sees one owner per key per JVM.
  */
 public class LockRegistryImpl implements LockRegistry {
-
-    private static final Logger LOG = Logger.getLogger(LockRegistryImpl.class);
-
-    static final long MAX_RENEW_RETRY_MILLIS = 1000;
 
     private final String name;
     private final LockBackend backend;
     private final AcquisitionEngine engine;
     private final Duration defaultWait;
     private final boolean failOnLostLease;
-    private final ScheduledExecutorService scheduler;
     private final Executor worker;
-    private final Consumer<LockLostEvent> lostListener;
     private final boolean nonBlocking;
+    private final KeyState.Leasing leasing;
     private final ConcurrentHashMap<String, KeyState> states = new ConcurrentHashMap<>();
 
     public LockRegistryImpl(String name, LockBackend backend, String instanceId, Duration defaultWait,
             boolean failOnLostLease, ScheduledExecutorService scheduler, Executor worker,
             Consumer<LockLostEvent> lostListener) {
         this(name, backend, instanceId, defaultWait, failOnLostLease, scheduler, worker, lostListener, System::nanoTime,
-                AcquisitionEngine::randomJitter);
+                AcquisitionEngine::randomJitter, Instant::now);
     }
 
-    /** With an injected clock and jitter for the acquisition loop; see {@link AcquisitionEngine}. */
+    /**
+     * With an injected clock and jitter for the acquisition loop (see {@link AcquisitionEngine}) and a wall clock for
+     * lease lifetimes (see {@link KeyState}).
+     */
     LockRegistryImpl(String name, LockBackend backend, String instanceId, Duration defaultWait,
             boolean failOnLostLease, ScheduledExecutorService scheduler, Executor worker,
-            Consumer<LockLostEvent> lostListener, LongSupplier nanoTime, LongUnaryOperator jitter) {
+            Consumer<LockLostEvent> lostListener, LongSupplier nanoTime, LongUnaryOperator jitter,
+            Supplier<Instant> wallClock) {
         this.name = name;
         this.backend = backend;
         this.engine = new AcquisitionEngine(name, backend, instanceId, nanoTime, jitter);
         this.defaultWait = defaultWait;
         this.failOnLostLease = failOnLostLease;
-        this.scheduler = scheduler;
         this.worker = worker;
-        this.lostListener = lostListener;
+        this.leasing = new KeyState.Leasing(name, backend, scheduler, lostListener, wallClock);
         Set<Capability> caps = backend.capabilities();
         this.nonBlocking = caps.contains(Capability.NON_BLOCKING);
     }
@@ -217,7 +213,7 @@ public class LockRegistryImpl implements LockRegistry {
             while (true) {
                 Lease lease = attempt.tryAcquire();
                 if (lease != null) {
-                    onAcquired(s, lease);
+                    s.onAcquired(lease);
                     return;
                 }
                 try {
@@ -243,7 +239,7 @@ public class LockRegistryImpl implements LockRegistry {
         }
         LockToken lost = null;
         if (s.holdCount(who) == 1) {
-            lost = releaseRemote(s);
+            lost = s.release();
         }
         s.exit(who);
         unref(s);
@@ -367,7 +363,7 @@ public class LockRegistryImpl implements LockRegistry {
             }
             if (lease != null) {
                 try {
-                    onAcquired(state, lease);
+                    state.onAcquired(lease);
                 } catch (RuntimeException e) {
                     releaseNow();
                     result.completeExceptionally(e);
@@ -405,7 +401,7 @@ public class LockRegistryImpl implements LockRegistry {
                 return null;
             }
             released = true;
-            LockToken lost = releaseRemote(state);
+            LockToken lost = state.release();
             state.exit(this);
             unref(state);
             return lost;
@@ -426,7 +422,7 @@ public class LockRegistryImpl implements LockRegistry {
 
     private KeyState ref(String key) {
         return states.compute(key, (k, s) -> {
-            KeyState state = s == null ? new KeyState(k) : s;
+            KeyState state = s == null ? new KeyState(k, leasing) : s;
             state.refs++;
             return state;
         });
@@ -439,123 +435,6 @@ public class LockRegistryImpl implements LockRegistry {
             }
             return --current.refs == 0 ? null : current;
         });
-    }
-
-    private void onAcquired(KeyState s, Lease lease) {
-        s.remote.lock();
-        try {
-            s.lease = lease;
-            s.lost = false;
-            s.token = new LockToken(s.key, lease.ownerId(), lease.fencing(), Instant.now());
-            if (lease.expires()) {
-                s.leaseMillis = Duration.between(Instant.now(), lease.expiresAt()).toMillis();
-                scheduleRenewal(s, lease, renewInterval(lease));
-            }
-        } finally {
-            s.remote.unlock();
-        }
-    }
-
-    private static long renewInterval(Lease lease) {
-        long ttl = Duration.between(Instant.now(), lease.expiresAt()).toMillis();
-        return Math.max(ttl / 3, 10);
-    }
-
-    private void scheduleRenewal(KeyState s, Lease lease, long delayMillis) {
-        if (!lease.expires()) {
-            return;
-        }
-        s.renewal = scheduler.schedule(() -> renew(s, lease), delayMillis, TimeUnit.MILLISECONDS);
-    }
-
-    private void renew(KeyState s, Lease expected) {
-        LockLostEvent lostEvent = null;
-        s.remote.lock();
-        try {
-            if (s.lease != expected || s.lost) {
-                return;
-            }
-            try {
-                Optional<Lease> renewed = backend.renew(expected);
-                if (renewed.isPresent()) {
-                    Lease r = renewed.get();
-                    s.lease = r;
-                    s.token = new LockToken(s.key, r.ownerId(), r.fencing(), s.token.acquiredAt());
-                    scheduleRenewal(s, r, renewInterval(r));
-                } else {
-                    lostEvent = markLost(s, null);
-                }
-            } catch (RuntimeException e) {
-                // transient error: keep retrying until shortly before the lease would expire server-side
-                long remaining = expected.expiresAt().toEpochMilli() - System.currentTimeMillis();
-                long safety = Math.min(MAX_RENEW_RETRY_MILLIS, s.leaseMillis / 10);
-                if (remaining <= safety) {
-                    lostEvent = markLost(s, e);
-                } else {
-                    LOG.debugf(e, "Renewal of lock '%s' in registry '%s' failed, retrying", s.key, name);
-                    scheduleRenewal(s, expected, Math.max(10, Math.min(MAX_RENEW_RETRY_MILLIS, (remaining - safety) / 2)));
-                }
-            }
-        } catch (Throwable t) {
-            LOG.errorf(t, "Unexpected error renewing lock '%s' in registry '%s'", s.key, name);
-        } finally {
-            s.remote.unlock();
-        }
-        if (lostEvent != null) {
-            try {
-                lostListener.accept(lostEvent);
-            } catch (Throwable t) {
-                LOG.errorf(t, "LockLostEvent observer failed for lock '%s'", s.key);
-            }
-        }
-    }
-
-    private LockLostEvent markLost(KeyState s, Throwable cause) {
-        s.lost = true;
-        LockToken token = s.token;
-        if (cause == null) {
-            LOG.warnf("Lease on lock '%s' in registry '%s' (fencing %d) was lost while held: another owner took it",
-                    s.key, name, token.fencing());
-        } else {
-            LOG.warnf("Lease on lock '%s' in registry '%s' (fencing %d) was lost while held: could not renew before"
-                    + " expiry (%s)", s.key, name, token.fencing(), cause.toString());
-        }
-        return new LockLostEvent(name, token, cause);
-    }
-
-    /** Cancels renewal and releases the remote lease; returns the token if the lease had been lost. */
-    private LockToken releaseRemote(KeyState s) {
-        Lease lease;
-        boolean wasLost;
-        LockToken token;
-        s.remote.lock();
-        try {
-            if (s.renewal != null) {
-                s.renewal.cancel(false);
-                s.renewal = null;
-            }
-            lease = s.lease;
-            wasLost = s.lost;
-            token = s.token;
-            s.lease = null;
-            s.token = null;
-            s.lost = false;
-        } finally {
-            s.remote.unlock();
-        }
-        if (wasLost) {
-            LOG.warnf("Released lock '%s' in registry '%s' whose lease (fencing %d) had been lost", s.key, name,
-                    token.fencing());
-            return token;
-        }
-        if (lease != null) {
-            try {
-                backend.release(lease);
-            } catch (RuntimeException e) {
-                LOG.warnf(e, "Could not release lock '%s' in registry '%s'; it will expire", s.key, name);
-            }
-        }
-        return null;
     }
 
     // ------------------------------------------------------------------ Lock handle
@@ -630,16 +509,16 @@ public class LockRegistryImpl implements LockRegistry {
         @Override
         public Optional<LockToken> token() {
             KeyState s = states.get(key);
-            if (s == null || !s.isOwner(Thread.currentThread()) || s.lost) {
+            if (s == null || !s.isOwner(Thread.currentThread()) || s.isLost()) {
                 return Optional.empty();
             }
-            return Optional.ofNullable(s.token);
+            return Optional.ofNullable(s.token());
         }
 
         @Override
         public boolean isHeldByCurrentThread() {
             KeyState s = states.get(key);
-            return s != null && s.isOwner(Thread.currentThread()) && !s.lost;
+            return s != null && s.isOwner(Thread.currentThread()) && !s.isLost();
         }
 
         @Override
