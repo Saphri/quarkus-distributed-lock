@@ -9,7 +9,7 @@ Status: experimental.
 | Artifact | What it is |
 |---|---|
 | `io.quarkiverse.lock:quarkus-distributed-lock` | `LockRegistry` API, `@Locked` interceptor, SPI, in-JVM backend (`in-memory`) |
-| `io.quarkiverse.lock:quarkus-distributed-lock-nats` | NATS JetStream KV backend (`nats`), on top of `quarkus-nats-jetstream-client` |
+| `io.quarkiverse.lock:quarkus-distributed-lock-nats` | NATS JetStream KV backend (`nats`), on top of `quarkus-messaging-nats-jetstream-client` |
 
 ## Usage
 
@@ -59,7 +59,7 @@ quarkus.lock.jobs.wait-timeout=0s
 quarkus.lock.nats.lease=30s             # = bucket max age; whole seconds
 quarkus.lock.nats.replicas=3            # when the bucket is created
 quarkus.lock.nats.storage=file          # file | memory
-quarkus.lock.nats.datasource=default    # quarkus-nats-jetstream-client datasource
+quarkus.lock.nats.datasource=default    # quarkus-messaging-nats-jetstream-client datasource
 quarkus.lock.jobs.nats.bucket=locks_jobs  # defaults: "locks" / "locks_<registry>"
 quarkus.lock.jobs.nats.lease=10s
 ```

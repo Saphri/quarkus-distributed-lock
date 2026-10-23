@@ -81,7 +81,7 @@ public class NatsLockBackendFactory implements LockBackendFactory {
         Instance<Client> client = clients.select(Identifier.Literal.of(datasource));
         if (!client.isResolvable()) {
             throw new IllegalStateException("Lock registry '" + registry + "': no NATS datasource '" + datasource
-                    + "' (quarkus-nats-jetstream-client)");
+                    + "' (quarkus-messaging-nats-jetstream-client)");
         }
         Connection connection = client.get().nativeConnection();
         boolean markers = provision(connection, registry, bucket, lease);
