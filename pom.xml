@@ -26,11 +26,11 @@
     </modules>
 
     <properties>
-        <maven.compiler.release>17</maven.compiler.release>
+        <maven.compiler.release>21</maven.compiler.release>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
-        <quarkus.version>3.40.1.1</quarkus.version>
-        <nats-jetstream.version>3.40.7</nats-jetstream.version>
+        <quarkus.version>4.0.0.Beta1</quarkus.version>
+        <nats-jetstream.version>4.0.0.Beta1</nats-jetstream.version>
         <compiler-plugin.version>3.16.0</compiler-plugin.version>
         <surefire-plugin.version>3.6.0</surefire-plugin.version>
         <assertj.version>3.27.7</assertj.version>
@@ -73,12 +73,12 @@
             </dependency>
             <dependency>
                 <groupId>io.quarkiverse.reactivemessaging.nats-jetstream</groupId>
-                <artifactId>quarkus-messaging-nats-jetstream</artifactId>
+                <artifactId>quarkus-nats-jetstream-client</artifactId>
                 <version>${nats-jetstream.version}</version>
             </dependency>
             <dependency>
                 <groupId>io.quarkiverse.reactivemessaging.nats-jetstream</groupId>
-                <artifactId>quarkus-messaging-nats-jetstream-deployment</artifactId>
+                <artifactId>quarkus-nats-jetstream-client-deployment</artifactId>
                 <version>${nats-jetstream.version}</version>
             </dependency>
         </dependencies>
