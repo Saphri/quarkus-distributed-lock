@@ -23,7 +23,7 @@
         </dependency>
         <dependency>
             <groupId>io.quarkiverse.reactivemessaging.nats-jetstream</groupId>
-            <artifactId>quarkus-messaging-nats-jetstream-deployment</artifactId>
+            <artifactId>quarkus-nats-jetstream-client-deployment</artifactId>
         </dependency>
         <dependency>
             <groupId>io.quarkus</groupId>
