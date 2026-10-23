@@ -73,7 +73,7 @@ public interface NatsLockConfig {
         Optional<String> storage();
 
         /**
-         * The {@code quarkus-messaging-nats-jetstream} datasource whose connection is used. Named registries inherit
+         * The {@code quarkus-nats-jetstream-client} datasource whose connection is used. Named registries inherit
          * the default registry's value; the built-in default is the default datasource.
          */
         Optional<String> datasource();
