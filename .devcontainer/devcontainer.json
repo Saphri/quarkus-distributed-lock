@@ -7,7 +7,7 @@
       "jdkDistro": "mandrel",
       "installMaven": "true"
     },
-    "ghcr.io/devcontainers/features/node:2.1.1": {},
+    "ghcr.io/devcontainers/features/node:2.1.2": {},
     "ghcr.io/devcontainers-extra/features/quarkus-sdkman:2": {
       "jdkVersion": "none"
     },
