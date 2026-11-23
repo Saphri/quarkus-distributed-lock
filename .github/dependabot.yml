@@ -12,6 +12,13 @@ updates:
       interval: "daily"
     assignees:
       - "Saphri"
+    # Stay on the Quarkus 3.x line (and the matching quarkiverse nats-jetstream release);
+    # see AGENTS.md "Gotchas" for why 4.x is not an automatic upgrade.
+    ignore:
+      - dependency-name: "io.quarkus:*"
+        versions: ["4.*"]
+      - dependency-name: "io.quarkiverse.reactivemessaging.nats-jetstream:*"
+        versions: ["4.*"]
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
