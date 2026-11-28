@@ -16,9 +16,9 @@ updates:
     # see AGENTS.md "Gotchas" for why 4.x is not an automatic upgrade.
     ignore:
       - dependency-name: "io.quarkus:*"
-        versions: ["4.x"]
+        update-types: ["version-update:semver-major"]
       - dependency-name: "io.quarkiverse.reactivemessaging.nats-jetstream:*"
-        versions: ["4.x"]
+        update-types: ["version-update:semver-major"]
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
